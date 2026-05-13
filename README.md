@@ -26,17 +26,6 @@ An error-log file is produced to provide possible exception data.
 #### Signature
 ```python
 function_finder(
-    rust_code_dir_path: str,
-    function_name_to_find: str,
-    function_depth: int = 0,
-    file_depth: int = 2,
-    only_search_this_file_path: str | None = None,
-    output_dir: str | None = None,
-) -> list[str]
-```
-
-```python
-function_finder(
     rust_code_dir_path: str,        # often the src/ file in your rust 'crate'
     function_name_to_find: str,     # prime target: the function you are looking for
     function_depth: int = 0,        # how much recursive search: functions called by that function to find
