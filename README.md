@@ -35,6 +35,17 @@ function_finder(
 ) -> list[str]
 ```
 
+```python
+function_finder(
+    rust_code_dir_path: str,        # often the src/ file in your rust 'crate'
+    function_name_to_find: str,     # prime target: the function you are looking for
+    function_depth: int = 0,        # how much recursive search: functions called by that function to find
+    file_depth: int = 2,            # directory-file depth to -r search
+    only_search_this_file_path: str | None = None,  # optional examine only one file
+    output_dir: str | None = None,  # if None: default is use CWD (current working directory)
+) -> list[str]
+```
+
 ### Function 2: `flatten_finder(dir_path)`
 
 #### Signature
