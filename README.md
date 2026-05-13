@@ -8,14 +8,15 @@ to:
 - primary function
 - up to N depth of the same for functions called by that function
 - in up to N depth sub-directories of modules in the code directory
+- results saved to files with timestamped names in function_finder_files/
 
 ##### B. Save those functions to individual files and optionally to one flat file
 
-The goal of this tool is to be useful for working with a large code project \
+The goal of this tool is to be useful for projects with more than a few functions, \
 where a routine but non-trivial task is extracting the code-scope \
-around a specific function.
+around a specific function (a function, and the functions called by that function).
 
-#### Simple Tool:
+### Simple Tool:
 This is a simple tool that does not cover all possible edge cases. \
 An error-log file is produced to provide possible exception data.
 
@@ -34,7 +35,7 @@ function_finder(
 ) -> list[str]
 ```
 
-## Function 2: `flatten_finder(dir_path)`
+### Function 2: `flatten_finder(dir_path)`
 
 #### Signature
 ```python
