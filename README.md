@@ -16,13 +16,13 @@ where a routine but non-trivial task is extracting the code-scope \
 around a specific function.
 
 #### Simple Tool:
-This is a simple tool that does not cover all possible edge cases.
+This is a simple tool that does not cover all possible edge cases. \
 An error-log file is produced to provide possible exception data.
 
 
-## Function 1: `function_finder()`
+### Function 1: `function_finder()`
 
-### Signature
+#### Signature
 ```python
 function_finder(
     rust_code_dir_path: str,
@@ -34,16 +34,9 @@ function_finder(
 ) -> list[str]
 ```
 
-### Behavior
-
-
-
-
 ## Function 2: `flatten_finder(dir_path)`
 
-### Signature
+#### Signature
 ```python
 flatten_finder(dir_path: str) -> str
 ```
-
-### Behavior
