@@ -266,6 +266,63 @@ def _build_function_definition_detection_regex(function_name_to_find: str) -> "r
     return re.compile(full_regex_pattern_string)
 
 
+def _build_top_level_item_definition_detection_regex() -> "re.Pattern[str]":
+    """
+    Build a compiled regex that matches a line which begins (after optional
+    leading whitespace) with ANY Rust top-level item definition. This is
+    used to locate the start of "whatever comes next" after a function, so
+    we can determine where a function's extracted region must end.
+
+    Returns
+    -------
+    re.Pattern[str]
+        Compiled regex pattern. A match indicates the line starts a
+        top-level item definition of one of these kinds:
+          fn, struct, enum, trait, impl, mod, type, union, const, static
+
+    Notes
+    -----
+    Accepts the same visibility/modifier prefixes as
+    `_build_function_definition_detection_regex`:
+      - optional visibility: `pub`, `pub(crate)`, `pub(super)`,
+        `pub(in path::to::mod)`
+      - optional modifiers (any order/combination): `async`, `unsafe`,
+        `const`, `extern "ABI"`, `default`
+
+    The matched keyword (`fn`, `struct`, ...) must be followed by
+    whitespace, `<`, `(`, `{`, `:`, or end-of-line, so we do not falsely
+    match identifiers that merely start with one of these keywords
+    (e.g. `function_x`, `structured_thing`).
+    """
+    # Visibility (optional): pub OR pub(...)
+    visibility_pattern_fragment = r"(?:pub(?:\([^)]*\))?\s+)?"
+    # Modifier keywords in any order/combination, each optional.
+    modifier_pattern_fragment = (
+        r"(?:(?:async|unsafe|const|default)\s+)*"
+        r"(?:extern\s+(?:\"[^\"]*\"\s+)?)?"
+        r"(?:(?:async|unsafe|const|default)\s+)*"
+    )
+    # The set of item keywords whose appearance marks the start of a new
+    # top-level item region.
+    item_keyword_alternation_pattern_fragment = (
+        r"(?:fn|struct|enum|trait|impl|mod|type|union|const|static)"
+    )
+
+    full_regex_pattern_string = (
+        r"^\s*"
+        + visibility_pattern_fragment
+        + modifier_pattern_fragment
+        + item_keyword_alternation_pattern_fragment
+        + r"(?=\s|<|\(|\{|:|$)"
+    )
+
+    return re.compile(full_regex_pattern_string)
+
+
+# Pre-compile once at module load for reuse across files.
+_COMPILED_TOP_LEVEL_ITEM_DEFINITION_REGEX = _build_top_level_item_definition_detection_regex()
+
+
 def _find_function_definition_line_indices_in_file_lines(
     file_text_lines_list: list[str],
     function_name_to_find: str,
@@ -358,72 +415,200 @@ def _find_function_top_boundary_line_index(
     return top_boundary_line_index_integer
 
 
-def _find_function_bottom_boundary_line_index_via_brace_counting(
+def _find_all_top_level_item_region_start_line_indices_in_file(
+    file_text_lines_list: list[str],
+) -> list[int]:
+    """
+    Pass 1 of the two-pass extraction strategy.
+
+    Scan an entire `.rs` file's lines and return a sorted list of zero-indexed
+    line numbers, each one being the FIRST line of some top-level item's
+    extracted region.
+
+    A "top-level item's extracted region" begins at the topmost contiguous
+    `///` / `//!` / `#[...]` line immediately above the item's definition
+    line, or at the definition line itself if there are no such preceding
+    lines.
+
+    Parameters
+    ----------
+    file_text_lines_list : list[str]
+        The full content of a `.rs` file split into lines.
+
+    Returns
+    -------
+    list[int]
+        Sorted, ascending list of zero-indexed region-start line numbers.
+        Used by `_find_function_bottom_boundary_line_index_via_next_region_start`
+        to determine where a given function's region must end (namely, one
+        line before the next region-start).
+
+    Notes
+    -----
+    Top-level item kinds detected: `fn`, `struct`, `enum`, `trait`, `impl`,
+    `mod`, `type`, `union`, `const`, `static`. The set of recognized prefixes
+    (visibility / `async` / `unsafe` / `const` / `extern "ABI"` / `default`)
+    mirrors that of `_build_function_definition_detection_regex`.
+
+    Climbing upward through doc-comments and attributes reuses
+    `_find_function_top_boundary_line_index` so the rule is identical to
+    the one used for the target function.
+    """
+    region_start_line_indices_list: list[int] = []
+
+    for line_index_integer, single_line_string in enumerate(file_text_lines_list):
+        if _COMPILED_TOP_LEVEL_ITEM_DEFINITION_REGEX.match(single_line_string):
+            # Climb upward through doc-comments and attributes to find the
+            # true start of this item's region.
+            region_top_line_index_integer = _find_function_top_boundary_line_index(
+                file_text_lines_list,
+                line_index_integer,
+            )
+            region_start_line_indices_list.append(region_top_line_index_integer)
+
+    # Sort to be safe; in practice the scan is already in order, but
+    # climbing upward could in pathological cases produce a non-monotonic
+    # sequence if two items share preceding lines. Sorting and de-duplicating
+    # makes the lookup robust.
+    region_start_line_indices_list = sorted(set(region_start_line_indices_list))
+    return region_start_line_indices_list
+
+# # deprecated version
+# def old_find_function_bottom_boundary_line_index_via_brace_counting(
+#     file_text_lines_list: list[str],
+#     function_definition_line_index: int,
+# ) -> int:
+#     """
+#     Given the zero-indexed line of a function definition, find the
+#     zero-indexed line containing the closing `}` of the function body using
+#     naive brace counting.
+
+#     Parameters
+#     ----------
+#     file_text_lines_list : list[str]
+#         The full content of a `.rs` file split into lines.
+#     function_definition_line_index : int
+#         Zero-indexed line at which the function definition's `fn name(...)`
+#         line lives.
+
+#     Returns
+#     -------
+#     int
+#         Zero-indexed line of the closing `}`. If no opening brace is found
+#         (e.g., a trait method signature ending with `;`), returns
+#         `function_definition_line_index` (single-line signature).
+
+#     Limitations
+#     -----------
+#     Braces inside string literals, character literals, raw strings, or
+#     comments will mislead this counter. This is accepted per the project
+#     spec. A future improvement could strip strings/comments before counting.
+#     """
+#     running_brace_balance_integer = 0
+#     have_seen_first_opening_brace_flag = False
+#     total_file_line_count_integer = len(file_text_lines_list)
+
+#     current_line_index_integer = function_definition_line_index
+#     while current_line_index_integer < total_file_line_count_integer:
+#         single_line_string = file_text_lines_list[current_line_index_integer]
+
+#         for single_character_in_line in single_line_string:
+#             if single_character_in_line == "{":
+#                 running_brace_balance_integer += 1
+#                 have_seen_first_opening_brace_flag = True
+#             elif single_character_in_line == "}":
+#                 running_brace_balance_integer -= 1
+
+#             # Once we've seen the body open and the counter returns to zero,
+#             # this character closes the function body.
+#             if (
+#                 have_seen_first_opening_brace_flag
+#                 and running_brace_balance_integer == 0
+#             ):
+#                 return current_line_index_integer
+
+#         # Heuristic fallback: if the signature ends with `;` (e.g., a trait
+#         # method declaration without a body) and we never saw `{`, treat
+#         # the signature line itself as the end.
+#         if (
+#             not have_seen_first_opening_brace_flag
+#             and single_line_string.rstrip().endswith(";")
+#         ):
+#             return current_line_index_integer
+
+#         current_line_index_integer += 1
+
+#     # If we fell off the end, return the last line as a safe fallback.
+#     return total_file_line_count_integer - 1
+
+
+def _find_function_bottom_boundary_line_index_via_next_region_start(
     file_text_lines_list: list[str],
     function_definition_line_index: int,
+    sorted_region_start_line_indices_list: list[int],
 ) -> int:
     """
-    Given the zero-indexed line of a function definition, find the
-    zero-indexed line containing the closing `}` of the function body using
-    naive brace counting.
+    Pass 2 bottom-finder.
+
+    Given a function's definition line index and the precomputed sorted list
+    of region-start line indices for the whole file (from
+    `_find_all_top_level_item_region_start_line_indices_in_file`), return
+    the zero-indexed last line of this function's extracted region.
+
+    The rule is: the function's region ends one line BEFORE the next
+    top-level item's region begins. If there is no following item in the
+    file, the region ends at the last line of the file.
 
     Parameters
     ----------
     file_text_lines_list : list[str]
         The full content of a `.rs` file split into lines.
     function_definition_line_index : int
-        Zero-indexed line at which the function definition's `fn name(...)`
-        line lives.
+        Zero-indexed line at which the target function's `fn name(...)`
+        line lives. Note: this is the DEFINITION line, not the top of the
+        extracted region; we compare against it because doc-comments and
+        attributes above the function belong to THIS function, not to the
+        previous one.
+    sorted_region_start_line_indices_list : list[int]
+        Sorted ascending list of region-start line indices for every
+        top-level item in the file.
 
     Returns
     -------
     int
-        Zero-indexed line of the closing `}`. If no opening brace is found
-        (e.g., a trait method signature ending with `;`), returns
-        `function_definition_line_index` (single-line signature).
+        Zero-indexed line number of the last line of the function's
+        extracted region (inclusive).
 
-    Limitations
-    -----------
-    Braces inside string literals, character literals, raw strings, or
-    comments will mislead this counter. This is accepted per the project
-    spec. A future improvement could strip strings/comments before counting.
+    Rationale
+    ---------
+    This replaces brace counting, which was unreliable because braces
+    inside string literals, character literals, raw strings, line comments,
+    block comments, and macro bodies can desynchronize the counter and
+    silently swallow large portions of the file. The "next region start"
+    rule avoids parsing the body entirely.
     """
-    running_brace_balance_integer = 0
-    have_seen_first_opening_brace_flag = False
     total_file_line_count_integer = len(file_text_lines_list)
 
-    current_line_index_integer = function_definition_line_index
-    while current_line_index_integer < total_file_line_count_integer:
-        single_line_string = file_text_lines_list[current_line_index_integer]
+    # Find the smallest region-start line index that is strictly greater
+    # than the target function's definition line index.
+    next_region_start_line_index_or_none: int | None = None
+    for single_region_start_line_index_integer in sorted_region_start_line_indices_list:
+        if single_region_start_line_index_integer > function_definition_line_index:
+            next_region_start_line_index_or_none = single_region_start_line_index_integer
+            break
 
-        for single_character_in_line in single_line_string:
-            if single_character_in_line == "{":
-                running_brace_balance_integer += 1
-                have_seen_first_opening_brace_flag = True
-            elif single_character_in_line == "}":
-                running_brace_balance_integer -= 1
+    if next_region_start_line_index_or_none is None:
+        # No following item: this function runs to the end of the file.
+        return total_file_line_count_integer - 1
 
-            # Once we've seen the body open and the counter returns to zero,
-            # this character closes the function body.
-            if (
-                have_seen_first_opening_brace_flag
-                and running_brace_balance_integer == 0
-            ):
-                return current_line_index_integer
+    # Otherwise, stop one line before the next region begins.
+    bottom_boundary_line_index_integer = next_region_start_line_index_or_none - 1
 
-        # Heuristic fallback: if the signature ends with `;` (e.g., a trait
-        # method declaration without a body) and we never saw `{`, treat
-        # the signature line itself as the end.
-        if (
-            not have_seen_first_opening_brace_flag
-            and single_line_string.rstrip().endswith(";")
-        ):
-            return current_line_index_integer
+    # Defensive clamp: never return a line index below the definition line.
+    if bottom_boundary_line_index_integer < function_definition_line_index:
+        bottom_boundary_line_index_integer = function_definition_line_index
 
-        current_line_index_integer += 1
-
-    # If we fell off the end, return the last line as a safe fallback.
-    return total_file_line_count_integer - 1
+    return bottom_boundary_line_index_integer
 
 
 def _extract_callee_function_names_from_body_lines(
@@ -684,6 +869,29 @@ def _function_finder_recursive_internal_worker(
             )
             continue
 
+        # Pass 1 (per file): precompute the sorted region-start line indices
+        # for every top-level item in this file. Used to determine where
+        # the target function's extracted region must end.
+        try:
+            sorted_region_start_line_indices_list_for_this_file = (
+                _find_all_top_level_item_region_start_line_indices_in_file(
+                    file_text_lines_list
+                )
+            )
+        except Exception as pass_one_scan_exception_object:
+            full_traceback_text_string = traceback.format_exc()
+            _log_error_message_to_file_and_terminal(
+                error_log_absolute_file_path,
+                (
+                    "Failed pass-1 region-start scan in file "
+                    f"{single_rust_file_absolute_path_string!r} for "
+                    f"{function_name_to_find!r}: "
+                    f"{pass_one_scan_exception_object!r}\n"
+                    f"{full_traceback_text_string}"
+                ),
+            )
+            continue
+
         # 3) Find each function definition occurrence in the file.
         try:
             matching_definition_line_indices_list = (
@@ -724,9 +932,10 @@ def _function_finder_recursive_internal_worker(
                     )
                 )
                 bottom_boundary_line_index_integer = (
-                    _find_function_bottom_boundary_line_index_via_brace_counting(
+                    _find_function_bottom_boundary_line_index_via_next_region_start(
                         file_text_lines_list,
                         single_definition_line_index_integer,
+                        sorted_region_start_line_indices_list_for_this_file,
                     )
                 )
 
@@ -1163,12 +1372,12 @@ def flatten_finder(dir_path: str) -> str:
     return flat_output_absolute_file_path
 
 
-# ---------------------------------------------------------------------------
-# Optional CLI-style smoke test when run directly (kept minimal & safe)
-# ---------------------------------------------------------------------------
+# ---------
+#  CLI Q&A
+# ---------
 if __name__ == "__main__":
-    # This block intentionally does nothing destructive. It prints usage
-    # info so accidental execution is harmless and informative.
+    # Q&A for user cli
+
     print(
         "function_finder module. Import and call:\n"
         "    from function_finder import function_finder, flatten_finder\n"
@@ -1183,7 +1392,7 @@ if __name__ == "__main__":
         "    flat_path_string = flatten_finder('./function_finder_files')\n"
     )
 
-    print("\n\nFunctoin Finder (Rust) Q&A\n")
+    print("\n\nFunction Finder (Rust) Q&A\n")
 
     rust_code_dir_path = input("What is rust_code_dir_path? (e.g. src/\n > ")
     function_name_to_find = input("What is function_name_to_find?\n > ")
@@ -1211,8 +1420,8 @@ if __name__ == "__main__":
     produced_file_paths_list = function_finder(
         rust_code_dir_path=rust_code_dir_path,
         function_name_to_find=function_name_to_find,
-        function_depth=function_depth,
-        file_depth=file_depth,
+        function_depth=int(function_depth),
+        file_depth=int(file_depth),
         only_search_this_file_path=only_search_this_file_path,
         output_dir=output_dir,
     )
