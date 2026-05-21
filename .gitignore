@@ -5,6 +5,8 @@ __pycache__/
 
 function_finder_files/
 flat_functions_*
+functional_toc_files_*
+no_tests_files_*
 
 # C extensions
 *.so

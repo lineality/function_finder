@@ -169,7 +169,7 @@ if __name__ == "__main__":
 
     print("\n\nFile flattener (Rust) Q&A\n")
 
-    dir_of_rs_files_to_flatten = input("What is dir path of rs files to flatten?")
+    dir_of_rs_files_to_flatten = input("What is dir path to rs files? (to \"flatten\" into one file)")
 
     produced_file_paths_list = flatten_finder(
         dir_of_rs_files_to_flatten,
