@@ -3,6 +3,8 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+sandbox/
+
 function_finder_files/
 flat_functions_*
 functional_toc_files_*
