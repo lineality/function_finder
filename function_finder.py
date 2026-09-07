@@ -40,7 +40,7 @@ import os
 import re
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -94,7 +94,7 @@ def _generate_iso8601_timestamp_string() -> str:
     """
     # Use local time (naive) per the spec example which does not include a
     # timezone suffix. Replace ':' with '_' for filesystem safety.
-    current_datetime_object = datetime.now()
+    current_datetime_object = datetime.now(timezone.utc)
     raw_iso_string = current_datetime_object.isoformat(timespec="microseconds")
     filesystem_safe_iso_string = raw_iso_string.replace(":", "_")
     return filesystem_safe_iso_string
@@ -605,8 +605,14 @@ def _find_function_bottom_boundary_line_index_via_next_region_start(
     bottom_boundary_line_index_integer = next_region_start_line_index_or_none - 1
 
     # Defensive clamp: never return a line index below the definition line.
-    if bottom_boundary_line_index_integer < function_definition_line_index:
-        bottom_boundary_line_index_integer = function_definition_line_index
+    # if bottom_boundary_line_index_integer < function_definition_line_index:
+    #     bottom_boundary_line_index_integer = function_definition_line_index
+
+    # Defensive clamp: never return a line index below the definition line.
+    bottom_boundary_line_index_integer = max(
+        bottom_boundary_line_index_integer,
+        function_definition_line_index
+    )
 
     return bottom_boundary_line_index_integer
 
@@ -1429,7 +1435,11 @@ if __name__ == "__main__":
     flatten_or_not = input("Do you want a flat file?    (y)es / (n)o\n > ")
 
     if str(flatten_or_not).lower().strip() in ["y", "yes", "true", "ok", "flat"]:
-        flat_path_string = flatten_finder('./function_finder_files')
+
+        # Define the new path
+        new_path = os.path.join(str(output_dir), "function_finder_files")
+
+        flat_path_string = flatten_finder(new_path)
         print(flat_path_string)
 
     print("\nFind Ok!\n")
