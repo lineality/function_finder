@@ -43,8 +43,7 @@ import os
 import re
 import time
 import traceback
-from datetime import datetime
-
+from datetime import datetime, timezone
 
 # ============================================================================
 # Module-level constants
@@ -93,7 +92,7 @@ def _generate_iso8601_timestamp_string() -> str:
     str
         e.g. '2024-01-15T14_32_45_123456'.
     """
-    current_datetime_object = datetime.now()
+    current_datetime_object = datetime.now(timezone.utc)
     raw_iso_string = current_datetime_object.isoformat(timespec="microseconds")
     filesystem_safe_iso_string = raw_iso_string.replace(":", "_")
     return filesystem_safe_iso_string
@@ -511,10 +510,11 @@ def _find_test_regions_to_strip_from_file(
                 definition_line_index_integer
             ].strip()
             is_attribute_line = downward_line_stripped_string.startswith("#[")
-            is_doc_comment_line = (
-                downward_line_stripped_string.startswith("///")
-                or downward_line_stripped_string.startswith("//!")
-            )
+            # is_doc_comment_line = (
+            #     downward_line_stripped_string.startswith("///")
+            #     or downward_line_stripped_string.startswith("//!")
+            # )
+            is_doc_comment_line = downward_line_stripped_string.startswith(("///", "//!"))
             is_blank_line = downward_line_stripped_string == ""
             if is_attribute_line or is_doc_comment_line or is_blank_line:
                 definition_line_index_integer += 1
@@ -830,7 +830,7 @@ def _write_summary_lines_to_unique_output_file(
     provenance_header_text_string = (
         "// Summary file produced by functional_table_of_contents.\n"
         f"// Source file: {source_file_absolute_path}\n"
-        f"// Generated at: {datetime.now().isoformat(timespec='seconds')}\n"
+        f"// Generated at: {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n"
         "// NOTE: cargo test code stripped; function bodies replaced with\n"
         "//       a placeholder. The original file is unchanged.\n"
         "\n"
@@ -947,6 +947,7 @@ def _process_single_rust_source_file(
     except Exception as write_exception_object:
         # _write_summary_lines_to_unique_output_file already logged.
         # Swallow here so other files in the batch can still be processed.
+        print(str(write_exception_object))
         return None
 
     return written_path_string
@@ -1069,7 +1070,7 @@ def functional_table_of_contents(
         )
 
     if not isinstance(summary_filename_prefix, str):
-        raise ValueError(
+        raise TypeError(
             "functional_table_of_contents: `summary_filename_prefix` must "
             f"be a string; got {summary_filename_prefix!r}."
         )
